@@ -1,0 +1,689 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useState, useCallback } from 'react'
+     4→import { motion, AnimatePresence } from 'framer-motion'
+     5→import { format, isToday, isTomorrow, isFuture } from 'date-fns'
+     6→import {
+     7→  Plus,
+     8→  CalendarDays,
+     9→  Clock,
+    10→  Mail,
+    11→  Phone,
+    12→  Trash2,
+    13→  CheckCircle2,
+    14→  XCircle,
+    15→  Loader2,
+    16→  CalendarPlus,
+    17→  StickyNote,
+    18→  User,
+    19→  Hourglass,
+    20→} from 'lucide-react'
+    21→import { Card, CardContent } from '@/components/ui/card'
+    22→import { Badge } from '@/components/ui/badge'
+    23→import { Button } from '@/components/ui/button'
+    24→import { Input } from '@/components/ui/input'
+    25→import { Textarea } from '@/components/ui/textarea'
+    26→import { Label } from '@/components/ui/label'
+    27→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    28→import {
+    29→  Dialog,
+    30→  DialogContent,
+    31→  DialogHeader,
+    32→  DialogTitle,
+    33→  DialogTrigger,
+    34→  DialogFooter,
+    35→  DialogClose,
+    36→} from '@/components/ui/dialog'
+    37→import {
+    38→  Select,
+    39→  SelectContent,
+    40→  SelectItem,
+    41→  SelectTrigger,
+    42→  SelectValue,
+    43→} from '@/components/ui/select'
+    44→
+    45→// ─── Types ───────────────────────────────────────────────────────────────────
+    46→
+    47→interface Appointment {
+    48→  id: string
+    49→  customerName: string
+    50→  customerEmail: string | null
+    51→  customerPhone: string | null
+    52→  service: string
+    53→  date: string
+    54→  duration: number
+    55→  status: string
+    56→  notes: string | null
+    57→  createdAt: string
+    58→}
+    59→
+    60→type TabStatus = 'all' | 'scheduled' | 'confirmed' | 'completed' | 'cancelled'
+    61→
+    62→// ─── Helpers ─────────────────────────────────────────────────────────────────
+    63→
+    64→const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
+    65→  scheduled: {
+    66→    label: 'Scheduled',
+    67→    className: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:border-amber-800',
+    68→  },
+    69→  confirmed: {
+    70→    label: 'Confirmed',
+    71→    className: 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-900/40 dark:text-teal-300 dark:border-teal-800',
+    72→  },
+    73→  completed: {
+    74→    label: 'Completed',
+    75→    className: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-800',
+    76→  },
+    77→  cancelled: {
+    78→    label: 'Cancelled',
+    79→    className: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/40 dark:text-red-300 dark:border-red-800',
+    80→  },
+    81→  'no-show': {
+    82→    label: 'No Show',
+    83→    className: 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/40 dark:text-gray-400 dark:border-gray-700',
+    84→  },
+    85→}
+    86→
+    87→function formatAppointmentDate(dateStr: string): string {
+    88→  const date = new Date(dateStr)
+    89→  let dayLabel = ''
+    90→  if (isToday(date)) dayLabel = 'Today'
+    91→  else if (isTomorrow(date)) dayLabel = 'Tomorrow'
+    92→
+    93→  const formatted = format(date, 'EEE, MMM d')
+    94→  const time = format(date, 'h:mm a')
+    95→  if (dayLabel) return `${dayLabel} at ${time}`
+    96→  return `${formatted} at ${time}`
+    97→}
+    98→
+    99→// ─── Animation Variants ──────────────────────────────────────────────────────
+   100→
+   101→const containerVariants = {
+   102→  hidden: { opacity: 0 },
+   103→  visible: {
+   104→    opacity: 1,
+   105→    transition: { staggerChildren: 0.05 },
+   106→  },
+   107→}
+   108→
+   109→const itemVariants = {
+   110→  hidden: { opacity: 0, y: 12 },
+   111→  visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' } },
+   112→  exit: { opacity: 0, scale: 0.95, transition: { duration: 0.2 } },
+   113→}
+   114→
+   115→const emptyVariants = {
+   116→  hidden: { opacity: 0, scale: 0.9 },
+   117→  visible: { opacity: 1, scale: 1, transition: { duration: 0.4, ease: 'easeOut' } },
+   118→}
+   119→
+   120→// ─── Skeleton ────────────────────────────────────────────────────────────────
+   121→
+   122→function AppointmentCardSkeleton() {
+   123→  return (
+   124→    <div className="rounded-xl border border-border/50 bg-card p-4 sm:p-5">
+   125→      <div className="flex items-start justify-between gap-3">
+   126→        <div className="flex-1 space-y-2.5">
+   127→          <div className="h-5 w-36 animate-pulse rounded-md bg-muted" />
+   128→          <div className="h-4 w-48 animate-pulse rounded-md bg-muted" />
+   129→          <div className="flex gap-2">
+   130→            <div className="h-5 w-16 animate-pulse rounded-full bg-muted" />
+   131→            <div className="h-5 w-20 animate-pulse rounded-full bg-muted" />
+   132→          </div>
+   133→          <div className="space-y-1 pt-1">
+   134→            <div className="h-3 w-40 animate-pulse rounded bg-muted" />
+   135→            <div className="h-3 w-32 animate-pulse rounded bg-muted" />
+   136→          </div>
+   137→        </div>
+   138→        <div className="flex gap-1.5">
+   139→          <div className="h-8 w-16 animate-pulse rounded-md bg-muted" />
+   140→          <div className="h-8 w-16 animate-pulse rounded-md bg-muted" />
+   141→          <div className="h-8 w-16 animate-pulse rounded-md bg-muted" />
+   142→        </div>
+   143→      </div>
+   144→    </div>
+   145→  )
+   146→}
+   147→
+   148→// ─── Main Component ──────────────────────────────────────────────────────────
+   149→
+   150→export default function AppointmentsView() {
+   151→  const [appointments, setAppointments] = useState<Appointment[]>([])
+   152→  const [loading, setLoading] = useState(true)
+   153→  const [activeTab, setActiveTab] = useState<TabStatus>('all')
+   154→  const [dialogOpen, setDialogOpen] = useState(false)
+   155→  const [submitting, setSubmitting] = useState(false)
+   156→  const [actionLoading, setActionLoading] = useState<string | null>(null)
+   157→  const [deleting, setDeleting] = useState<string | null>(null)
+   158→
+   159→  // Form state
+   160→  const [formCustomerName, setFormCustomerName] = useState('')
+   161→  const [formCustomerEmail, setFormCustomerEmail] = useState('')
+   162→  const [formCustomerPhone, setFormCustomerPhone] = useState('')
+   163→  const [formService, setFormService] = useState('')
+   164→  const [formDate, setFormDate] = useState('')
+   165→  const [formDuration, setFormDuration] = useState('30')
+   166→  const [formNotes, setFormNotes] = useState('')
+   167→
+   168→  // ─── Data Fetching ────────────────────────────────────────────────────────
+   169→
+   170→  const fetchAppointments = useCallback(async () => {
+   171→    try {
+   172→      setLoading(true)
+   173→      const res = await fetch('/api/appointments')
+   174→      if (!res.ok) throw new Error('Failed to fetch')
+   175→      const data = await res.json()
+   176→      setAppointments(data)
+   177→    } catch (err) {
+   178→      console.error('Failed to fetch appointments:', err)
+   179→    } finally {
+   180→      setLoading(false)
+   181→    }
+   182→  }, [])
+   183→
+   184→  useEffect(() => {
+   185→    fetchAppointments()
+   186→  }, [fetchAppointments])
+   187→
+   188→  // ─── Helpers ──────────────────────────────────────────────────────────────
+   189→
+   190→  const getStatusCounts = useCallback((): Record<string, number> => {
+   191→    const counts: Record<string, number> = { all: appointments.length }
+   192→    for (const a of appointments) {
+   193→      counts[a.status] = (counts[a.status] || 0) + 1
+   194→    }
+   195→    return counts
+   196→  }, [appointments])
+   197→
+   198→  const filteredAppointments = activeTab === 'all'
+   199→    ? appointments
+   200→    : appointments.filter((a) => a.status === activeTab)
+   201→
+   202→  // ─── Form Submission ──────────────────────────────────────────────────────
+   203→
+   204→  const resetForm = useCallback(() => {
+   205→    setFormCustomerName('')
+   206→    setFormCustomerEmail('')
+   207→    setFormCustomerPhone('')
+   208→    setFormService('')
+   209→    setFormDate('')
+   210→    setFormDuration('30')
+   211→    setFormNotes('')
+   212→  }, [])
+   213→
+   214→  const handleSubmit = async () => {
+   215→    if (!formCustomerName.trim() || !formService.trim() || !formDate) return
+   216→
+   217→    try {
+   218→      setSubmitting(true)
+   219→      const res = await fetch('/api/appointments', {
+   220→        method: 'POST',
+   221→        headers: { 'Content-Type': 'application/json' },
+   222→        body: JSON.stringify({
+   223→          customerName: formCustomerName.trim(),
+   224→          customerEmail: formCustomerEmail.trim() || null,
+   225→          customerPhone: formCustomerPhone.trim() || null,
+   226→          service: formService.trim(),
+   227→          date: formDate,
+   228→          duration: parseInt(formDuration, 10),
+   229→          notes: formNotes.trim() || null,
+   230→        }),
+   231→      })
+   232→      if (!res.ok) throw new Error('Failed to create appointment')
+   233→      resetForm()
+   234→      setDialogOpen(false)
+   235→      fetchAppointments()
+   236→    } catch (err) {
+   237→      console.error('Failed to create appointment:', err)
+   238→    } finally {
+   239→      setSubmitting(false)
+   240→    }
+   241→  }
+   242→
+   243→  // ─── Status Actions ───────────────────────────────────────────────────────
+   244→
+   245→  const updateStatus = async (id: string, status: string) => {
+   246→    try {
+   247→      setActionLoading(id)
+   248→      const res = await fetch(`/api/appointments/${id}`, {
+   249→        method: 'PUT',
+   250→        headers: { 'Content-Type': 'application/json' },
+   251→        body: JSON.stringify({ status }),
+   252→      })
+   253→      if (!res.ok) throw new Error('Failed to update status')
+   254→      fetchAppointments()
+   255→    } catch (err) {
+   256→      console.error('Failed to update appointment status:', err)
+   257→    } finally {
+   258→      setActionLoading(null)
+   259→    }
+   260→  }
+   261→
+   262→  const deleteAppointment = async (id: string) => {
+   263→    if (!window.confirm('Are you sure you want to delete this appointment?')) return
+   264→    try {
+   265→      setDeleting(id)
+   266→      const res = await fetch(`/api/appointments/${id}`, { method: 'DELETE' })
+   267→      if (!res.ok) throw new Error('Failed to delete')
+   268→      fetchAppointments()
+   269→    } catch (err) {
+   270→      console.error('Failed to delete appointment:', err)
+   271→    } finally {
+   272→      setDeleting(null)
+   273→    }
+   274→  }
+   275→
+   276→  // ─── Render ───────────────────────────────────────────────────────────────
+   277→
+   278→  const statusCounts = getStatusCounts()
+   279→  const isFormValid = formCustomerName.trim() && formService.trim() && !!formDate
+   280→
+   281→  return (
+   282→    <section className="mx-auto w-full max-w-5xl space-y-6">
+   283→      {/* Header */}
+   284→      <motion.div
+   285→        initial={{ opacity: 0, y: -8 }}
+   286→        animate={{ opacity: 1, y: 0 }}
+   287→        transition={{ duration: 0.3 }}
+   288→        className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+   289→      >
+   290→        <div>
+   291→          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+   292→            Appointments
+   293→          </h1>
+   294→          <p className="mt-1 text-sm text-muted-foreground">
+   295→            Manage and track all your appointments
+   296→          </p>
+   297→        </div>
+   298→
+   299→        <Dialog
+   300→          open={dialogOpen}
+   301→          onOpenChange={(open) => {
+   302→            setDialogOpen(open)
+   303→            if (!open) resetForm()
+   304→          }}
+   305→        >
+   306→          <DialogTrigger asChild>
+   307→            <Button className="bg-teal-600 text-white hover:bg-teal-700 gap-2">
+   308→              <Plus className="h-4 w-4" />
+   309→              New Appointment
+   310→            </Button>
+   311→          </DialogTrigger>
+   312→
+   313→          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+   314→            <DialogHeader>
+   315→              <DialogTitle className="flex items-center gap-2">
+   316→                <CalendarPlus className="h-5 w-5 text-teal-600" />
+   317→                New Appointment
+   318→              </DialogTitle>
+   319→            </DialogHeader>
+   320→
+   321→            <div className="grid gap-4 py-4">
+   322→              {/* Customer Name */}
+   323→              <div className="space-y-2">
+   324→                <Label htmlFor="customerName" className="flex items-center gap-1.5">
+   325→                  <User className="h-3.5 w-3.5 text-muted-foreground" />
+   326→                  Customer Name <span className="text-red-500">*</span>
+   327→                </Label>
+   328→                <Input
+   329→                  id="customerName"
+   330→                  placeholder="e.g. John Smith"
+   331→                  value={formCustomerName}
+   332→                  onChange={(e) => setFormCustomerName(e.target.value)}
+   333→                />
+   334→              </div>
+   335→
+   336→              {/* Customer Email */}
+   337→              <div className="space-y-2">
+   338→                <Label htmlFor="customerEmail" className="flex items-center gap-1.5">
+   339→                  <Mail className="h-3.5 w-3.5 text-muted-foreground" />
+   340→                  Customer Email
+   341→                </Label>
+   342→                <Input
+   343→                  id="customerEmail"
+   344→                  type="email"
+   345→                  placeholder="john@example.com"
+   346→                  value={formCustomerEmail}
+   347→                  onChange={(e) => setFormCustomerEmail(e.target.value)}
+   348→                />
+   349→              </div>
+   350→
+   351→              {/* Customer Phone */}
+   352→              <div className="space-y-2">
+   353→                <Label htmlFor="customerPhone" className="flex items-center gap-1.5">
+   354→                  <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+   355→                  Customer Phone
+   356→                </Label>
+   357→                <Input
+   358→                  id="customerPhone"
+   359→                  type="tel"
+   360→                  placeholder="+1 (555) 123-4567"
+   361→                  value={formCustomerPhone}
+   362→                  onChange={(e) => setFormCustomerPhone(e.target.value)}
+   363→                />
+   364→              </div>
+   365→
+   366→              {/* Service */}
+   367→              <div className="space-y-2">
+   368→                <Label htmlFor="service" className="flex items-center gap-1.5">
+   369→                  <StickyNote className="h-3.5 w-3.5 text-muted-foreground" />
+   370→                  Service <span className="text-red-500">*</span>
+   371→                </Label>
+   372→                <Input
+   373→                  id="service"
+   374→                  placeholder="e.g. Haircut, Consultation, Check-up"
+   375→                  value={formService}
+   376→                  onChange={(e) => setFormService(e.target.value)}
+   377→                />
+   378→              </div>
+   379→
+   380→              {/* Date & Duration Row */}
+   381→              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+   382→                <div className="space-y-2">
+   383→                  <Label htmlFor="date" className="flex items-center gap-1.5">
+   384→                    <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
+   385→                    Date & Time <span className="text-red-500">*</span>
+   386→                  </Label>
+   387→                  <Input
+   388→                    id="date"
+   389→                    type="datetime-local"
+   390→                    value={formDate}
+   391→                    onChange={(e) => setFormDate(e.target.value)}
+   392→                  />
+   393→                </div>
+   394→
+   395→                <div className="space-y-2">
+   396→                  <Label htmlFor="duration" className="flex items-center gap-1.5">
+   397→                    <Hourglass className="h-3.5 w-3.5 text-muted-foreground" />
+   398→                    Duration
+   399→                  </Label>
+   400→                  <Select value={formDuration} onValueChange={setFormDuration}>
+   401→                    <SelectTrigger id="duration">
+   402→                      <SelectValue />
+   403→                    </SelectTrigger>
+   404→                    <SelectContent>
+   405→                      <SelectItem value="15">15 minutes</SelectItem>
+   406→                      <SelectItem value="30">30 minutes</SelectItem>
+   407→                      <SelectItem value="45">45 minutes</SelectItem>
+   408→                      <SelectItem value="60">60 minutes</SelectItem>
+   409→                      <SelectItem value="90">90 minutes</SelectItem>
+   410→                    </SelectContent>
+   411→                  </Select>
+   412→                </div>
+   413→              </div>
+   414→
+   415→              {/* Notes */}
+   416→              <div className="space-y-2">
+   417→                <Label htmlFor="notes" className="flex items-center gap-1.5">
+   418→                  <StickyNote className="h-3.5 w-3.5 text-muted-foreground" />
+   419→                  Notes
+   420→                </Label>
+   421→                <Textarea
+   422→                  id="notes"
+   423→                  placeholder="Any additional notes..."
+   424→                  value={formNotes}
+   425→                  onChange={(e) => setFormNotes(e.target.value)}
+   426→                  rows={3}
+   427→                />
+   428→              </div>
+   429→            </div>
+   430→
+   431→            <DialogFooter className="gap-2 sm:gap-0">
+   432→              <DialogClose asChild>
+   433→                <Button variant="outline" disabled={submitting}>
+   434→                  Cancel
+   435→                </Button>
+   436→              </DialogClose>
+   437→              <Button
+   438→                onClick={handleSubmit}
+   439→                disabled={!isFormValid || submitting}
+   440→                className="bg-teal-600 text-white hover:bg-teal-700 gap-2"
+   441→              >
+   442→                {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+   443→                {submitting ? 'Creating...' : 'Create Appointment'}
+   444→              </Button>
+   445→            </DialogFooter>
+   446→          </DialogContent>
+   447→        </Dialog>
+   448→      </motion.div>
+   449→
+   450→      {/* Tabs */}
+   451→      <motion.div
+   452→        initial={{ opacity: 0, y: 8 }}
+   453→        animate={{ opacity: 1, y: 0 }}
+   454→        transition={{ duration: 0.3, delay: 0.1 }}
+   455→      >
+   456→        <Tabs
+   457→          value={activeTab}
+   458→          onValueChange={(val) => setActiveTab(val as TabStatus)}
+   459→        >
+   460→          <TabsList className="w-full flex-wrap gap-1 bg-muted/60 p-1 h-auto">
+   461→            {(['all', 'scheduled', 'confirmed', 'completed', 'cancelled'] as TabStatus[]).map(
+   462→              (tab) => (
+   463→                <TabsTrigger
+   464→                  key={tab}
+   465→                  value={tab}
+   466→                  className="gap-1.5 data-[state=active]:bg-teal-600 data-[state=active]:text-white text-sm capitalize"
+   467→                >
+   468→                  {tab}
+   469→                  <Badge
+   470→                    variant="secondary"
+   471→                    className="h-5 min-w-5 px-1.5 text-[10px] font-semibold tabular-nums"
+   472→                  >
+   473→                    {statusCounts[tab] || 0}
+   474→                  </Badge>
+   475→                </TabsTrigger>
+   476→              )
+   477→            )}
+   478→          </TabsList>
+   479→
+   480→          {/* Content for all tabs — same list, filtered */}
+   481→          {(['all', 'scheduled', 'confirmed', 'completed', 'cancelled'] as TabStatus[]).map(
+   482→            (tab) => (
+   483→              <TabsContent key={tab} value={tab} className="mt-4">
+   484→                {loading ? (
+   485→                  <div className="space-y-3">
+   486→                    {Array.from({ length: 3 }).map((_, i) => (
+   487→                      <AppointmentCardSkeleton key={i} />
+   488→                    ))}
+   489→                  </div>
+   490→                ) : filteredAppointments.length === 0 ? (
+   491→                  <motion.div
+   492→                    variants={emptyVariants}
+   493→                    initial="hidden"
+   494→                    animate="visible"
+   495→                    className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-16 text-center"
+   496→                  >
+   497→                    <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-950/40">
+   498→                      <CalendarDays className="h-8 w-8 text-teal-500" />
+   499→                    </div>
+   500→                    <h3 className="text-lg font-semibold text-foreground">
+   501→                      No {tab === 'all' ? '' : tab + ' '}appointments
+   502→                    </h3>
+   503→                    <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+   504→                      {tab === 'all'
+   505→                        ? 'Get started by creating your first appointment.'
+   506→                        : `There are no ${tab} appointments to show.`}
+   507→                    </p>
+   508→                    {tab === 'all' && (
+   509→                      <Button
+   510→                        className="mt-5 bg-teal-600 text-white hover:bg-teal-700 gap-2"
+   511→                        onClick={() => setDialogOpen(true)}
+   512→                      >
+   513→                        <Plus className="h-4 w-4" />
+   514→                        New Appointment
+   515→                      </Button>
+   516→                    )}
+   517→                  </motion.div>
+   518→                ) : (
+   519→                  <motion.div
+   520→                    variants={containerVariants}
+   521→                    initial="hidden"
+   522→                    animate="visible"
+   523→                    className="space-y-3"
+   524→                  >
+   525→                    <AnimatePresence mode="popLayout">
+   526→                      {filteredAppointments.map((appointment) => {
+   527→                        const dateObj = new Date(appointment.date)
+   528→                        const isUpcoming = isFuture(dateObj) && appointment.status !== 'completed' && appointment.status !== 'cancelled'
+   529→
+   530→                        return (
+   531→                          <motion.div
+   532→                            key={appointment.id}
+   533→                            variants={itemVariants}
+   534→                            layout
+   535→                            exit="exit"
+   536→                          >
+   537→                            <Card
+   538→                              className={`overflow-hidden border transition-shadow hover:shadow-md ${
+   539→                                isUpcoming
+   540→                                  ? 'border-teal-200/60 dark:border-teal-800/40'
+   541→                                  : 'border-border/50'
+   542→                              }`}
+   543→                            >
+   544→                              <CardContent className="p-4 sm:p-5">
+   545→                                <div className="flex flex-col gap-3">
+   546→                                  {/* Top Row: Info */}
+   547→                                  <div className="flex items-start justify-between gap-3">
+   548→                                    <div className="min-w-0 flex-1 space-y-1.5">
+   549→                                      <div className="flex flex-wrap items-center gap-2">
+   550→                                        <span className="text-base font-semibold text-foreground truncate">
+   551→                                          {appointment.customerName}
+   552→                                        </span>
+   553→                                        <Badge
+   554→                                          variant="outline"
+   555→                                          className={STATUS_CONFIG[appointment.status]?.className || STATUS_CONFIG['scheduled'].className}
+   556→                                        >
+   557→                                          {STATUS_CONFIG[appointment.status]?.label || appointment.status}
+   558→                                        </Badge>
+   559→                                      </div>
+   560→
+   561→                                      <p className="text-sm font-medium text-foreground/80">
+   562→                                        {appointment.service}
+   563→                                      </p>
+   564→
+   565→                                      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+   566→                                        <span className="flex items-center gap-1.5">
+   567→                                          <CalendarDays className="h-3.5 w-3.5" />
+   568→                                          {formatAppointmentDate(appointment.date)}
+   569→                                        </span>
+   570→                                        <Badge variant="secondary" className="gap-1 text-xs font-normal">
+   571→                                          <Clock className="h-3 w-3" />
+   572→                                          {appointment.duration} min
+   573→                                        </Badge>
+   574→                                      </div>
+   575→
+   576→                                      {/* Contact Info */}
+   577→                                      {(appointment.customerEmail || appointment.customerPhone) && (
+   578→                                        <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5 text-xs text-muted-foreground">
+   579→                                          {appointment.customerEmail && (
+   580→                                            <span className="flex items-center gap-1">
+   581→                                              <Mail className="h-3 w-3" />
+   582→                                              {appointment.customerEmail}
+   583→                                            </span>
+   584→                                          )}
+   585→                                          {appointment.customerPhone && (
+   586→                                            <span className="flex items-center gap-1">
+   587→                                              <Phone className="h-3 w-3" />
+   588→                                              {appointment.customerPhone}
+   589→                                            </span>
+   590→                                          )}
+   591→                                        </div>
+   592→                                      )}
+   593→
+   594→                                      {/* Notes */}
+   595→                                      {appointment.notes && (
+   596→                                        <p className="mt-1 rounded-md bg-muted/50 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+   597→                                          {appointment.notes}
+   598→                                        </p>
+   599→                                      )}
+   600→                                    </div>
+   601→                                  </div>
+   602→
+   603→                                  {/* Actions Row */}
+   604→                                  <div className="flex flex-wrap items-center gap-1.5 border-t border-border/40 pt-3">
+   605→                                    {appointment.status === 'scheduled' && (
+   606→                                      <Button
+   607→                                        size="sm"
+   608→                                        variant="outline"
+   609→                                        className="h-8 gap-1.5 text-xs text-teal-700 border-teal-300 hover:bg-teal-50 hover:text-teal-800 dark:text-teal-400 dark:border-teal-700 dark:hover:bg-teal-950"
+   610→                                        onClick={() => updateStatus(appointment.id, 'confirmed')}
+   611→                                        disabled={actionLoading === appointment.id}
+   612→                                      >
+   613→                                        {actionLoading === appointment.id ? (
+   614→                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+   615→                                        ) : (
+   616→                                          <CheckCircle2 className="h-3.5 w-3.5" />
+   617→                                        )}
+   618→                                        Confirm
+   619→                                      </Button>
+   620→                                    )}
+   621→
+   622→                                    {(appointment.status === 'scheduled' || appointment.status === 'confirmed') && (
+   623→                                      <Button
+   624→                                        size="sm"
+   625→                                        variant="outline"
+   626→                                        className="h-8 gap-1.5 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 dark:text-emerald-400 dark:border-emerald-700 dark:hover:bg-emerald-950"
+   627→                                        onClick={() => updateStatus(appointment.id, 'completed')}
+   628→                                        disabled={actionLoading === appointment.id}
+   629→                                      >
+   630→                                        {actionLoading === appointment.id ? (
+   631→                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+   632→                                        ) : (
+   633→                                          <CheckCircle2 className="h-3.5 w-3.5" />
+   634→                                        )}
+   635→                                        Complete
+   636→                                      </Button>
+   637→                                    )}
+   638→
+   639→                                    {(appointment.status === 'scheduled' || appointment.status === 'confirmed') && (
+   640→                                      <Button
+   641→                                        size="sm"
+   642→                                        variant="outline"
+   643→                                        className="h-8 gap-1.5 text-xs text-red-600 border-red-300 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950"
+   644→                                        onClick={() => updateStatus(appointment.id, 'cancelled')}
+   645→                                        disabled={actionLoading === appointment.id}
+   646→                                      >
+   647→                                        {actionLoading === appointment.id ? (
+   648→                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+   649→                                        ) : (
+   650→                                          <XCircle className="h-3.5 w-3.5" />
+   651→                                        )}
+   652→                                        Cancel
+   653→                                      </Button>
+   654→                                    )}
+   655→
+   656→                                    <div className="ml-auto">
+   657→                                      <Button
+   658→                                        size="sm"
+   659→                                        variant="ghost"
+   660→                                        className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-950"
+   661→                                        onClick={() => deleteAppointment(appointment.id)}
+   662→                                        disabled={deleting === appointment.id}
+   663→                                      >
+   664→                                        {deleting === appointment.id ? (
+   665→                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+   666→                                        ) : (
+   667→                                          <Trash2 className="h-3.5 w-3.5" />
+   668→                                        )}
+   669→                                        <span className="sr-only sm:not-sr-only">Delete</span>
+   670→                                      </Button>
+   671→                                    </div>
+   672→                                  </div>
+   673→                                </div>
+   674→                              </CardContent>
+   675→                            </Card>
+   676→                          </motion.div>
+   677→                        )
+   678→                      })}
+   679→                    </AnimatePresence>
+   680→                  </motion.div>
+   681→                )}
+   682→              </TabsContent>
+   683→            )
+   684→          )}
+   685→        </Tabs>
+   686→      </motion.div>
+   687→    </section>
+   688→  )
+   689→}
