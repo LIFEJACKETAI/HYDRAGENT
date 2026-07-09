@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
 import {
   Phone,
+  PhoneCall,
   Plus,
   Trash2,
   PhoneIncoming,
@@ -18,6 +19,8 @@ import {
   Timer,
   User,
   StickyNote,
+  MessageSquare,
+  Send,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -260,6 +263,14 @@ export default function CallsView() {
   const [submitting, setSubmitting] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
 
+  // Twilio outbound state
+  const [twilioOpen, setTwilioOpen] = useState(false)
+  const [twilioType, setTwilioType] = useState<'call' | 'sms'>('call')
+  const [twilioPhone, setTwilioPhone] = useState('')
+  const [twilioMessage, setTwilioMessage] = useState('')
+  const [twilioSending, setTwilioSending] = useState(false)
+  const [twilioResult, setTwilioResult] = useState<string | null>(null)
+
   // Form state
   const [formName, setFormName] = useState('')
   const [formPhone, setFormPhone] = useState('')
@@ -343,6 +354,45 @@ export default function CallsView() {
     }
   }
 
+  // ─── Twilio Outbound ──────────────────────────────────────────────────
+
+  const handleTwilioAction = async () => {
+    if (!twilioPhone.trim()) return
+    try {
+      setTwilioSending(true)
+      setTwilioResult(null)
+      const res = await fetch('/api/twilio/outbound', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: twilioType,
+          to: twilioPhone.startsWith('+') ? twilioPhone : `+${twilioPhone.replace(/[^\d]/g, '')}`,
+          ...(twilioType === 'sms' ? { message: twilioMessage || 'Hello from HYDRAGENT!' } : {}),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed')
+      setTwilioResult(
+        twilioType === 'call'
+          ? `Call initiated! SID: ${data.sid}`
+          : `SMS sent! SID: ${data.sid}`
+      )
+      fetchCalls()
+    } catch (err) {
+      setTwilioResult(err instanceof Error ? err.message : 'Failed')
+    } finally {
+      setTwilioSending(false)
+    }
+  }
+
+  const openTwilioDialog = (type: 'call' | 'sms', phone?: string) => {
+    setTwilioType(type)
+    setTwilioPhone(phone || '')
+    setTwilioMessage('')
+    setTwilioResult(null)
+    setTwilioOpen(true)
+  }
+
   // ─── Form Helpers ─────────────────────────────────────────────────────────
 
   const resetForm = () => {
@@ -369,13 +419,30 @@ export default function CallsView() {
           <h2 className="text-2xl font-bold tracking-tight text-foreground">Call Logs</h2>
           <p className="text-sm text-muted-foreground mt-1">Track customer calls, voicemails, and scheduled callbacks.</p>
         </div>
-        <Dialog open={logOpen} onOpenChange={(open) => { setLogOpen(open); if (open) resetForm() }}>
-          <DialogTrigger asChild>
-            <Button className="bg-teal-600 hover:bg-teal-700 text-white shadow-sm">
-              <Plus className="h-4 w-4 mr-2" />
-              Log Call
-            </Button>
-          </DialogTrigger>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20"
+            onClick={() => openTwilioDialog('call')}
+          >
+            <PhoneCall className="h-4 w-4 mr-2" />
+            Call
+          </Button>
+          <Button
+            variant="outline"
+            className="border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20"
+            onClick={() => openTwilioDialog('sms')}
+          >
+            <MessageSquare className="h-4 w-4 mr-2" />
+            SMS
+          </Button>
+          <Dialog open={logOpen} onOpenChange={(open) => { setLogOpen(open); if (open) resetForm() }}>
+            <DialogTrigger asChild>
+              <Button className="bg-teal-600 hover:bg-teal-700 text-white shadow-sm">
+                <Plus className="h-4 w-4 mr-2" />
+                Log Call
+              </Button>
+            </DialogTrigger>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
@@ -493,6 +560,90 @@ export default function CallsView() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Twilio Outbound Dialog */}
+        <Dialog open={twilioOpen} onOpenChange={setTwilioOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                {twilioType === 'call' ? (
+                  <><PhoneCall className="h-5 w-5 text-amber-600" /> Make a Call</>
+                ) : (
+                  <><MessageSquare className="h-5 w-5 text-blue-600" /> Send SMS</>
+                )}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="twilio-to">
+                  <Phone className="h-3.5 w-3.5 inline mr-1.5 text-muted-foreground" />
+                  Phone Number (E.164) <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="twilio-to"
+                  type="tel"
+                  placeholder={"+1234567890"}
+                  value={twilioPhone}
+                  onChange={(e) => setTwilioPhone(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Include country code, e.g. +1 for US, +44 for UK
+                </p>
+              </div>
+              {twilioType === 'sms' && (
+                <div className="space-y-2">
+                  <Label htmlFor="twilio-msg">
+                    <Send className="h-3.5 w-3.5 inline mr-1.5 text-muted-foreground" />
+                    Message
+                  </Label>
+                  <Textarea
+                    id="twilio-msg"
+                    placeholder="Type your message..."
+                    className="min-h-[100px] resize-y"
+                    value={twilioMessage}
+                    onChange={(e) => setTwilioMessage(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {twilioMessage.length}/1600 characters
+                  </p>
+                </div>
+              )}
+              {twilioResult && (
+                <div className={`rounded-lg px-4 py-3 text-sm ${twilioResult.includes('Failed') || twilioResult.includes('Error')
+                    ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+                    : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400'
+                  }`}>
+                  {twilioResult}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button variant="outline">Cancel</Button>
+              </DialogClose>
+              <Button
+                onClick={handleTwilioAction}
+                disabled={!twilioPhone.trim() || twilioSending}
+                className={twilioType === 'call'
+                  ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }
+              >
+                {twilioSending ? (
+                  <>
+                    <span className="h-4 w-4 mr-2 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    Sending...
+                  </>
+                ) : twilioType === 'call' ? (
+                  <><PhoneCall className="h-4 w-4 mr-2" /> Call Now</>
+                ) : (
+                  <><Send className="h-4 w-4 mr-2" /> Send SMS</>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        </div>
       </motion.div>
 
       {/* Quick Stats */}
@@ -600,7 +751,7 @@ export default function CallsView() {
                           )}
                         </div>
 
-                        {/* Date + Delete */}
+                        {/* Date + Actions */}
                         <div className="flex flex-col items-end gap-2 shrink-0">
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Clock className="h-3.5 w-3.5" />
@@ -611,10 +762,29 @@ export default function CallsView() {
                               {format(new Date(call.createdAt), 'MMM d')}
                             </span>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                              onClick={(e) => { e.stopPropagation(); openTwilioDialog('call', call.customerPhone) }}
+                              title="Call back"
+                            >
+                              <PhoneCall className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                              onClick={(e) => { e.stopPropagation(); openTwilioDialog('sms', call.customerPhone) }}
+                              title="Send SMS"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                             onClick={(e) => {
                               e.stopPropagation()
                               handleDelete(call.id)
@@ -628,6 +798,7 @@ export default function CallsView() {
                               <Trash2 className="h-4 w-4" />
                             )}
                           </Button>
+                        </div>
                         </div>
                       </div>
                     </CardContent>
