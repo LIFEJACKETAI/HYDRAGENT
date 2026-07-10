@@ -238,23 +238,54 @@ function AddDocumentDialog({
     if (!title.trim()) return
     setSaving(true)
     try {
-      const res = await fetch('/api/knowledge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title.trim(),
-          content: mode === 'paste' ? content : content,
-          fileType: mode === 'paste' ? 'txt' : fileType || 'txt',
-          fileSize: mode === 'paste' ? new Blob([content]).size : fileSize,
-          source,
-        }),
-      })
-      if (!res.ok) throw new Error('Failed to save document')
+      let res
+      if (mode === 'upload') {
+        // For uploads, we must use FormData to send the actual file
+        const formData = new FormData()
+        formData.append('title', title.trim())
+        formData.append('source', source)
+        
+        // Find the actual file from the input or state
+        // Since we don't store the File object in state, we'll read from the ref
+        const fileInput = fileInputRef.current
+        const file = fileInput?.files?.[0]
+        
+        if (!file) {
+          throw new Error('Please select a file to upload')
+        }
+        
+        formData.append('file', file)
+
+        res = await fetch('/api/knowledge', {
+          method: 'POST',
+          body: formData, // Browser automatically sets Content-Type to multipart/form-data
+        })
+      } else {
+        // For pasted text, JSON is fine
+        res = await fetch('/api/knowledge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: title.trim(),
+            content: content,
+            fileType: 'txt',
+            fileSize: new Blob([content]).size,
+            source,
+          }),
+        })
+      }
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to save document')
+      }
+      
       resetForm()
       onSaved()
       onOpenChange(false)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to save document:', err)
+      alert(err.message || 'An unexpected error occurred')
     } finally {
       setSaving(false)
     }
