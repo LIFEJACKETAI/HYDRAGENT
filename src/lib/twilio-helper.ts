@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import ZAI from 'z-ai-web-dev-sdk'
+import twilio from 'twilio'
 
 /**
  * Fetch the business profile and active knowledge docs,
@@ -32,6 +33,15 @@ export async function getAgentResponse(
     take: 10,
   })
 
+  // Lead Awareness Check: See if this user is an unconverted booking lead
+  let leadContext = ''
+  if (callerInfo?.phone) {
+    const lead = await db.bookingLead.findUnique({ where: { id: callerInfo.phone } })
+    if (lead && !lead.isConverted) {
+      leadContext = `\nIMPORTANT: This user is a "Pending Lead". They previously expressed interest in booking but didn't finish. Gently remind them and ask if they'd like to complete their appointment now.`
+    }
+  }
+
   const chatHistory = historyMessages
     .reverse() // Ensure chronological order for LLM
     .map((msg) => ({
@@ -62,12 +72,15 @@ ${business?.description ? `- Description: ${business.description}` : ''}
 
 KNOWLEDGE BASE:
 ${knowledgeContext || 'No knowledge base documents available.'}
+${leadContext}
 
 RULES:
 - Keep responses short (1-3 sentences for voice, 1-2 for SMS)
 - If the caller wants to book, ask for their name, preferred date/time, and service
 - IMPORTANT: Once you have the NAME, DATE/TIME, and SERVICE, you MUST trigger a booking by starting your response with: "BOOK_APPOINTMENT|Name|DateTime|Service" followed by a friendly confirmation message.
 - Example: "BOOK_APPOINTMENT|John Doe|2026-07-10 10:00|Oil Change. Great, John! I've booked your oil change for July 10th at 10 AM."
+- PANIC BUTTON: If the customer is frustrated, asks for a "real person", "human", "manager", or something you cannot handle, you MUST trigger a hand-off by starting your response with: "HANDOFF_HUMAN|Reason" followed by a message telling the user you are connecting them.
+- Example: "HANDOFF_HUMAN|Customer is angry about pricing. I'm connecting you with a member of our team right now. Please hold."
 - If you don't know something, offer to take a message
 - For voice: speak naturally, don't use markdown or special characters
 - For SMS: you can use some emoji if appropriate
@@ -91,6 +104,20 @@ ${callerInfo?.phone ? `- The caller's number is ${callerInfo.phone}` : ''}`
 
     let response = responseRaw
 
+    // 1. Lead Recovery Tracking
+    // If the AI is asking for booking info (detected by keywords in response), track as a lead
+    if (responseRaw.toLowerCase().includes('book') || responseRaw.toLowerCase().includes('appointment') || responseRaw.toLowerCase().includes('schedule')) {
+      await db.bookingLead.upsert({
+        where: { id: callerInfo?.phone || 'unknown' }, // Simplified: use phone as ID for lead tracking
+        update: { lastContacted: new Date() },
+        create: { 
+          id: callerInfo?.phone || 'unknown', 
+          customerPhone: callerInfo?.phone || 'unknown',
+          lastContacted: new Date() 
+        },
+      })
+    }
+
     // Handle Booking Trigger
     if (responseRaw.startsWith('BOOK_APPOINTMENT|')) {
       try {
@@ -109,6 +136,15 @@ ${callerInfo?.phone ? `- The caller's number is ${callerInfo.phone}` : ''}`
               status: 'scheduled',
             },
           })
+          
+          // Mark lead as converted
+          if (callerInfo?.phone) {
+            await db.bookingLead.update({
+              where: { id: callerInfo.phone },
+              data: { isConverted: true }
+            })
+          }
+
           // Use the confirmation message from AI, or a default one
           response = confirmationMsg || `Great! I've booked your ${service} for ${dateTime}.`
         } else {
@@ -118,6 +154,27 @@ ${callerInfo?.phone ? `- The caller's number is ${callerInfo.phone}` : ''}`
       } catch (e) {
         console.error('[Booking Error] Failed to create appointment:', e)
         response = 'I encountered an error while booking. Please try again or leave a message.'
+      }
+    } else if (responseRaw.startsWith('HANDOFF_HUMAN|')) {
+      try {
+        const [trigger, reason, ...rest] = responseRaw.split('|')
+        const handoffMsg = rest.join('|').trim()
+
+        // 🚨 EMERGENCY NOTIFICATION to Business Owner
+        const twilioConfig = getTwilioConfig()
+        if (twilioConfig) {
+          const client = twilio(twilioConfig.accountSid, twilioConfig.authToken)
+          await client.messages.create({
+            body: `🚨 URGENT HANDOFF: ${reason}\nCustomer: ${callerInfo?.phone || 'Unknown'}\nAI is attempting to connect them now.`,
+            from: twilioConfig.phoneNumber,
+            to: businessPhone,
+          })
+        }
+
+        response = handoffMsg || 'I am connecting you with a member of our team right now. Please hold.'
+      } catch (e) {
+        console.error('[Handoff Error] Failed to send emergency notification:', e)
+        response = 'I am having trouble connecting you to a human right now, but I have notified my manager. Please hold.'
       }
     }
 

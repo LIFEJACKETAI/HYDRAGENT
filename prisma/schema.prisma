@@ -85,6 +85,15 @@ model SmsLog {
   createdAt     DateTime @default(now())
 }
 
+model BookingLead {
+  id            String   @id @default(cuid())
+  customerPhone String
+  customerName  String?
+  lastService   String?
+  lastContacted DateTime @default(now())
+  isConverted   Boolean  @default(false)
+}
+
 model Integration {
   id          String   @id @default(cuid())
   type        String   // google_calendar, outlook_calendar, sendgrid, twilio, etc.
