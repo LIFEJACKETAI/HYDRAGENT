@@ -76,6 +76,15 @@ model CallLog {
   createdAt    DateTime @default(now())
 }
 
+model SmsLog {
+  id            String   @id @default(cuid())
+  customerPhone String
+  direction     String   // inbound, outbound
+  body          String
+  status        String   @default("sent")
+  createdAt     DateTime @default(now())
+}
+
 model Integration {
   id          String   @id @default(cuid())
   type        String   // google_calendar, outlook_calendar, sendgrid, twilio, etc.

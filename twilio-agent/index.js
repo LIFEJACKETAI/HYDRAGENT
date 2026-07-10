@@ -7,6 +7,13 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') }); // Correct 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
+// Debugging: Check if env vars are loaded
+console.log('--- Environment Check ---');
+console.log('TWILIO_ACCOUNT_SID loaded:', !!process.env.TWILIO_ACCOUNT_SID);
+console.log('TWILIO_AUTH_TOKEN loaded:', !!process.env.TWILIO_AUTH_TOKEN);
+console.log('TWILIO_PHONE_NUMBER loaded:', !!process.env.TWILIO_PHONE_NUMBER);
+console.log('-------------------------');
+
 // Initialize Twilio Client
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 

@@ -23,16 +23,21 @@ export async function getAgentResponse(
     .map((doc) => `--- ${doc.title} ---\n${doc.content}`)
     .join('\n\n')
 
-  // 3. Get recent chat history for context (last 10)
+  // 3. Get recent chat history for context (last 10 for THIS caller)
   const historyMessages = await db.chatMessage.findMany({
-    orderBy: { createdAt: 'asc' },
+    where: callerInfo?.phone ? {
+      content: { contains: `[Phone/SMS] ${callerInfo.phone}:` }
+    } : {},
+    orderBy: { createdAt: 'desc' },
     take: 10,
   })
 
-  const chatHistory = historyMessages.map((msg) => ({
-    role: msg.role as 'user' | 'assistant' | 'system',
-    content: msg.content,
-  }))
+  const chatHistory = historyMessages
+    .reverse() // Ensure chronological order for LLM
+    .map((msg) => ({
+      role: msg.role as 'user' | 'assistant' | 'system',
+      content: msg.content,
+    }))
 
   // 4. Build system prompt
   const businessName = business?.name || 'our business'
@@ -61,6 +66,8 @@ ${knowledgeContext || 'No knowledge base documents available.'}
 RULES:
 - Keep responses short (1-3 sentences for voice, 1-2 for SMS)
 - If the caller wants to book, ask for their name, preferred date/time, and service
+- IMPORTANT: Once you have the NAME, DATE/TIME, and SERVICE, you MUST trigger a booking by starting your response with: "BOOK_APPOINTMENT|Name|DateTime|Service" followed by a friendly confirmation message.
+- Example: "BOOK_APPOINTMENT|John Doe|2026-07-10 10:00|Oil Change. Great, John! I've booked your oil change for July 10th at 10 AM."
 - If you don't know something, offer to take a message
 - For voice: speak naturally, don't use markdown or special characters
 - For SMS: you can use some emoji if appropriate
@@ -69,27 +76,64 @@ ${callerInfo?.name ? `- The caller's name is ${callerInfo.name}` : ''}
 ${callerInfo?.phone ? `- The caller's number is ${callerInfo.phone}` : ''}`
 
   // 5. Call LLM
-  const zai = await ZAI.create()
-  const result = await zai.chat.completions.create({
-    model: 'default',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...chatHistory,
-      { role: 'user', content: userMessage },
-    ],
-  })
+  try {
+    const zai = await ZAI.create()
+    const result = await zai.chat.completions.create({
+      model: 'default',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...chatHistory,
+        { role: 'user', content: userMessage },
+      ],
+    })
 
-  const response = result.choices?.[0]?.message?.content ?? 'I apologize, I was unable to process that. Could you please repeat?'
+    const responseRaw = result.choices?.[0]?.message?.content ?? 'I apologize, I was unable to process that. Could you please repeat?'
 
-  // 6. Save to chat history
-  await db.chatMessage.create({
-    data: { role: 'user', content: `[Phone/SMS] ${callerInfo?.phone || ''}: ${userMessage}` },
-  })
-  await db.chatMessage.create({
-    data: { role: 'assistant', content: response },
-  })
+    let response = responseRaw
 
-  return response
+    // Handle Booking Trigger
+    if (responseRaw.startsWith('BOOK_APPOINTMENT|')) {
+      try {
+        const [trigger, name, dateTime, service, ...rest] = responseRaw.split('|')
+        const confirmationMsg = rest.join('|').trim()
+
+        // Convert AI's date string to JS Date
+        const bookingDate = new Date(dateTime)
+        if (!isNaN(bookingDate.getTime())) {
+          await db.appointment.create({
+            data: {
+              customerName: name,
+              customerPhone: callerInfo?.phone || null,
+              service: service,
+              date: bookingDate,
+              status: 'scheduled',
+            },
+          })
+          // Use the confirmation message from AI, or a default one
+          response = confirmationMsg || `Great! I've booked your ${service} for ${dateTime}.`
+        } else {
+          console.error('[Booking Error] Invalid date received from AI:', dateTime)
+          response = 'I had some trouble processing the date. Could you please tell me again when you would like to come in?'
+        }
+      } catch (e) {
+        console.error('[Booking Error] Failed to create appointment:', e)
+        response = 'I encountered an error while booking. Please try again or leave a message.'
+      }
+    }
+
+    // 6. Save to chat history
+    await db.chatMessage.create({
+      data: { role: 'user', content: `[Phone/SMS] ${callerInfo?.phone || ''}: ${userMessage}` },
+    })
+    await db.chatMessage.create({
+      data: { role: 'assistant', content: response },
+    })
+
+    return response
+  } catch (error) {
+    console.error('[AgentResponse Error]:', error)
+    return 'I am sorry, I am having a little trouble connecting right now. Please try again in a moment or leave a message.'
+  }
 }
 
 /**

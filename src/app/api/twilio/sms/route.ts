@@ -34,14 +34,12 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] From: ${from}, To: ${to}, Body: "${body}"`)
 
-    // Log the inbound SMS as an email-like record for tracking
-    await db.emailRecord.create({
+    // Log the inbound SMS
+    await db.smsLog.create({
       data: {
-        from: from,
-        to: to,
-        subject: `[SMS from ${from}]`,
-        body: body,
+        customerPhone: from,
         direction: 'inbound',
+        body: body,
         status: 'received',
       },
     })
