@@ -1,0 +1,5 @@
+# .ritual/.gitignore
+# config.json is repo-shared and meant to be committed
+*
+!.gitignore
+!config.json
